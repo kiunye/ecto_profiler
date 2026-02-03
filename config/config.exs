@@ -5,6 +5,8 @@
 import Config
 
 config :ecto_profiler,
+  # List of Ecto Repo modules to attach to (e.g. [MyApp.Repo]). Empty = no attach.
+  repos: [],
   # Threshold in milliseconds above which a query is considered slow (default: 100).
   slow_query_ms: 100,
   # Whether to run EXPLAIN on slow queries and store results (default: true in dev).

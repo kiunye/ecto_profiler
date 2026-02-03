@@ -28,6 +28,7 @@ defmodule EctoProfiler.MixProject do
   defp deps do
     [
       {:ecto, "~> 3.10"},
+      {:plug, "~> 1.14"},
       {:telemetry, "~> 1.0"},
       {:phoenix, "~> 1.7", optional: true},
       {:phoenix_live_view, "~> 0.20", optional: true},
