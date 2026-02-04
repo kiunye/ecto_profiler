@@ -5,6 +5,10 @@ defmodule EctoProfiler.Telemetry do
   Call `attach/0` (e.g. from Application.start) to attach handlers for each
   repo in config. The handler extracts query, params, duration, repo, and
   source from the event and appends to the current request in EctoProfiler.Storage.
+
+  When the Plug has not run (e.g. no Phoenix or tests), the request_id falls back
+  to `Process.get(:ecto_profiler_request_id, "default")`. Storage.append_query/2
+  creates a request entry on first event for that id, so query data is not dropped.
   """
 
   alias EctoProfiler.Storage

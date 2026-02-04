@@ -2,25 +2,35 @@ defmodule EctoProfiler.Storage do
   @moduledoc """
   ETS-backed storage for request and query data.
 
-  Stores request entries keyed by request_id. Each entry holds a list of
-  queries plus started_at/ended_at timestamps. Also provides normalized SQL
-  for grouping query shapes (e.g. for N+1 detection).
+  Request metadata (started_at, ended_at) is stored in a `:set` table keyed by
+  request_id. Queries are stored in a separate `:bag` table keyed by request_id,
+  so concurrent appends from multiple processes are safe (no read-modify-write).
+  Also provides normalized SQL for grouping query shapes (e.g. for N+1 detection).
   """
 
   @table_name :ecto_profiler_requests
+  @queries_table_name :ecto_profiler_queries
 
   @doc """
-  Ensures the ETS table exists. Idempotent. Call from the process that should
-  own the table (e.g. Application.start or a supervisor child).
+  Ensures the ETS tables exist. Idempotent. Call from the process that should
+  own the tables (e.g. Application.start or a supervisor child).
 
-  The table is `:set`, `:public`, keyed by request_id.
+  - `:ecto_profiler_requests` is `:set`, `:public`, keyed by request_id.
+  - `:ecto_profiler_queries` is `:bag`, `:public`, keyed by request_id (one row per query).
   """
   @spec ensure_table() :: :ok | {:error, term()}
   def ensure_table do
-    case :ets.whereis(@table_name) do
+    with :ok <- ensure_table(@table_name, [:set, :public, :named_table]),
+         :ok <- ensure_table(@queries_table_name, [:bag, :public, :named_table]) do
+      :ok
+    end
+  end
+
+  defp ensure_table(name, opts) do
+    case :ets.whereis(name) do
       :undefined ->
         try do
-          _ = :ets.new(@table_name, [:set, :public, :named_table])
+          _ = :ets.new(name, opts)
           :ok
         rescue
           e -> {:error, e}
@@ -34,12 +44,13 @@ defmodule EctoProfiler.Storage do
   @doc """
   Puts or updates a request entry for `request_id`.
 
-  If the entry does not exist, creates it with `started_at` set to now and
-  `queries` empty. If it exists, updates `ended_at` when `ended_at` is passed.
+  If the entry does not exist, creates it with `started_at` and `ended_at` (nil).
+  If it exists, updates `ended_at` when `ended_at` is passed. Queries are stored
+  in a separate bag table and merged in `get_request/1`.
   """
   @spec put_request(String.t() | term(), map()) :: :ok
   def put_request(request_id, %{started_at: _} = data) do
-    entry = Map.put_new(data, :queries, []) |> Map.put_new(:ended_at, nil)
+    entry = Map.put_new(data, :ended_at, nil) |> Map.take([:started_at, :ended_at])
     :ets.insert(@table_name, {request_id, entry})
     :ok
   end
@@ -59,30 +70,43 @@ defmodule EctoProfiler.Storage do
   @doc """
   Appends a query map to the request's query list.
 
-  The query map should include at least `:query`, `:params`, `:duration_us`,
-  `:repo`, and optionally `:normalized_sql`, `:source`, `:stacktrace`.
+  Uses a single ETS insert into a :bag table, so concurrent appends from multiple
+  processes are safe. If no request entry exists (e.g. Plug not in use or no-op),
+  a request is created with `started_at` set to the current monotonic time so
+  query data is not dropped.
   """
   @spec append_query(String.t() | term(), map()) :: :ok
   def append_query(request_id, query_map) do
     case :ets.lookup(@table_name, request_id) do
-      [{^request_id, entry}] ->
-        queries = [query_map | Map.get(entry, :queries, [])]
-        :ets.insert(@table_name, {request_id, Map.put(entry, :queries, queries)})
-        :ok
-
       [] ->
+        entry = %{started_at: System.monotonic_time(), ended_at: nil}
+        :ets.insert_new(@table_name, {request_id, entry})
+      [_] ->
         :ok
     end
+
+    :ets.insert(@queries_table_name, {request_id, query_map})
+    :ok
   end
 
   @doc """
   Returns the request entry for `request_id`, or `nil` if not found.
+
+  Merges in the query list from the queries bag (order is bag iteration order).
   """
   @spec get_request(String.t() | term()) :: map() | nil
   def get_request(request_id) do
     case :ets.lookup(@table_name, request_id) do
-      [{^request_id, entry}] -> entry
-      [] -> nil
+      [{^request_id, entry}] ->
+        queries =
+          :ets.lookup(@queries_table_name, request_id)
+          |> Enum.map(&elem(&1, 1))
+          |> Enum.reverse()
+
+        Map.put(entry, :queries, queries)
+
+      [] ->
+        nil
     end
   end
 
