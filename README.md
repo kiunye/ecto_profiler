@@ -26,6 +26,7 @@ Configure the application in your `config/*.exs` files (e.g. `config/config.exs`
 
 | Option             | Type    | Default | Description |
 |--------------------|---------|---------|-------------|
+| `repos`            | list    | `[]`    | Ecto Repo modules to attach query telemetry to (e.g. `[MyApp.Repo]`). |
 | `slow_query_ms`    | integer | `100`   | Threshold in milliseconds above which a query is considered slow. |
 | `enable_explain`   | boolean | `true`  | Whether to run EXPLAIN on slow queries and store results (e.g. for the dashboard). |
 
@@ -33,6 +34,7 @@ Configure the application in your `config/*.exs` files (e.g. `config/config.exs`
 
 ```elixir
 config :ecto_profiler,
+  repos: [MyApp.Repo],
   slow_query_ms: 100,
   enable_explain: true
 ```
